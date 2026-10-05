@@ -148,6 +148,7 @@ Envío. Manda el dígito por puerto serie al ESP-A, una sola vez por cada cambio
 ![Reconocimiento Punto 2](docs/reconocimiento_punto2.png)
 
 ### codigo esclavo
+```cpp
 /*
  * ESP-B  (ESCLAVO SPI + pantalla OLED I2C SSD1306 128x64)
  * Recibe del ESP-A la trama [0xA5, dígito, 0xA5 ^ dígito, 0x00]
@@ -266,7 +267,7 @@ void loop() {
     Serial.println("Trama SPI invalida");
   }
 }
-
+```
 ---
 
 
