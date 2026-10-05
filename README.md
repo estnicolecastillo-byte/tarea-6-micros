@@ -90,7 +90,7 @@ Los pines se pueden cambiar en los `#define` al inicio de cada `.ino`.
 
 
 ### codigo maestro
-
+```cpp
 /*
  * ESP-A  (MAESTRO SPI)
  * Recibe por puerto serie (USB, desde el PC) un dígito ASCII '0'..'9'
@@ -138,6 +138,7 @@ void loop() {
     // '\n', '\r' y cualquier otro carácter se ignoran
   }
 }
+```
 ### Uso
 OpenCV lee la cámara y toma un recuadro central de la imagen.
  Convierte a gris, desenfoca un poco, aplica umbral adaptativo y limpia el ruido. Queda el trazo en blanco sobre fondo negro, que es el formato de MNIST, la base de datos con la que se entrenó la red.
