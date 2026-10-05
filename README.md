@@ -18,7 +18,7 @@ Teclado 4x4 (I²C) → ESP32 → LCD I²C
 
 ### Hardware
 - ESP32
-- Teclado matricial 4x4 (módulo I²C) ⚠️
+- Teclado matricial 4x4 (módulo I²C) 
 - LCD 16x2 con módulo I²C
 - Protoboard y cables
 
@@ -32,20 +32,16 @@ Teclado 4x4 (I²C) → ESP32 → LCD I²C
 
 Direcciones I²C típicas: LCD `0x27`, teclado con PCF8574 `0x20`.
 
-![Esquemático Punto 1](docs/esquematico_punto1.png)
+<img width="831" height="513" alt="image" src="https://github.com/user-attachments/assets/5e3b553f-9a45-450e-891e-aaee0db64c4b" />
 
-### Uso
-1. Carga `punto1_teclado_brazo/firmware/esp32_teclado/esp32_teclado.ino` en el ESP32.
-2. Edita el puerto serie (ej. `COM7`) y los baudios (`115200`) en `simulacion/dibujar_brazo.py`.
-3. Cierra el Monitor Serie del Arduino IDE y ejecuta:
-```bash
-   cd punto1_teclado_brazo/simulacion
-   python dibujar_brazo.py
-```
-4. Presiona una tecla del teclado: aparece en la LCD y el brazo dibuja el número en PyBullet.
 
 ### Funcionamiento
-Describe aquí con tus palabras: cómo se lee el teclado, qué se muestra en la LCD, qué formato tiene el mensaje UART y cómo el script convierte cada tecla en una trayectoria del brazo (cinemática, articulaciones y pinza usadas).
+El ESP32 consulta el teclado 4x4 por el bus I²C (SDA/SCL). Con un módulo PCF8574 el ESP32 le pregunta qué fila y columna están activas y obtiene la tecla (1, 5, A, #...).
+Cada tecla se muestra en la LCD 16x2, que comparte el mismo bus I²C con otra dirección.
+El ESP32 manda la tecla por UART (USB) a 115200 baudios, por ejemplo como un carácter y un salto de línea.
+ Un script de Python con pyserial lee ese carácter. Busca la trayectoria del número, que es una lista de puntos (x, y) sobre el plano de dibujo. Con PyBullet calcula la cinemática inversa para que la punta del brazo (brazo.urdf) pase por esos puntos, y va moviendo las articulaciones.
+Resultado. El brazo traza el número en la simulación, como en la imagen del enunciado.
+
 
 ![Simulación Punto 1](docs/simulacion_punto1.png)
 
@@ -90,46 +86,190 @@ Cámara PC → Preprocesamiento OpenCV → CNN → Puerto serie → ESP-A (maest
 
 Los pines se pueden cambiar en los `#define` al inicio de cada `.ino`.
 
-![Esquemático Punto 2](docs/esquematico_punto2.png)
+<img width="764" height="400" alt="image" src="https://github.com/user-attachments/assets/ccb4b64f-14c1-4990-9199-3b0feb24059d" />
 
-### Procesamiento de imagen y modelo
-1. Se toma un recuadro central de la cámara.
-2. Escala de grises → desenfoque gaussiano → umbral adaptativo invertido → apertura morfológica (trazo blanco sobre fondo negro, como MNIST).
-3. Se recorta el dígito, se escala a 20x20 y se centra en un lienzo de 28x28.
-4. La CNN (2 capas convolucionales + capa densa, entrenada con MNIST y aumento de datos) devuelve el dígito y su confianza.
-5. Solo se envía cuando la predicción es estable durante 8 frames con confianza mínima del 85 %.
 
+### codigo maestro
+
+/*
+ * ESP-A  (MAESTRO SPI)
+ * Recibe por puerto serie (USB, desde el PC) un dígito ASCII '0'..'9'
+ * y lo envía por SPI al ESP-B con una trama de 4 bytes:
+ *   [0xA5, dígito, 0xA5 ^ dígito, 0x00]
+ */
+#include <SPI.h>
+
+#define PIN_SCK   18
+#define PIN_MISO  19
+#define PIN_MOSI  23
+#define PIN_CS     5
+
+#define SPI_HZ    1000000
+#define CABECERA  0xA5
+
+void enviarSPI(uint8_t digito) {
+  uint8_t trama[4] = { CABECERA, digito, (uint8_t)(CABECERA ^ digito), 0x00 };
+
+  SPI.beginTransaction(SPISettings(SPI_HZ, MSBFIRST, SPI_MODE0));
+  digitalWrite(PIN_CS, LOW);
+  delayMicroseconds(50);
+  SPI.transferBytes(trama, nullptr, 4);
+  delayMicroseconds(50);
+  digitalWrite(PIN_CS, HIGH);
+  SPI.endTransaction();
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_CS, OUTPUT);
+  digitalWrite(PIN_CS, HIGH);
+  SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
+  Serial.println("ESP-A listo (maestro SPI)");
+}
+
+void loop() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c >= '0' && c <= '9') {
+      uint8_t d = c - '0';
+      enviarSPI(d);
+      Serial.printf("SPI -> %u\n", d);
+    }
+    // '\n', '\r' y cualquier otro carácter se ignoran
+  }
+}
 ### Uso
-1. Entrenar el modelo (una sola vez):
-```bash
-   cd punto2_digitos_spi/python
-   python entrenar_modelo.py
-```
-2. Cargar `firmware/esp_b_esclavo/esp_b_esclavo.ino` en el ESP-B y `firmware/esp_a_maestro/esp_a_maestro.ino` en el ESP-A.
-3. Conectar el ESP-A al PC por USB y revisar su puerto (ej. `COM7`).
-4. Ejecutar el reconocimiento:
-```bash
-   python reconocer_digitos.py --puerto COM7
-```
-5. Escribe un dígito con trazo oscuro en papel blanco y ponlo dentro del recuadro. Cuando la predicción es estable, se envía y aparece en la OLED. Presiona `q` para salir.
-
-Sin `--puerto`, el programa solo reconoce y muestra el resultado en pantalla.
-
+OpenCV lee la cámara y toma un recuadro central de la imagen.
+ Convierte a gris, desenfoca un poco, aplica umbral adaptativo y limpia el ruido. Queda el trazo en blanco sobre fondo negro, que es el formato de MNIST, la base de datos con la que se entrenó la red.
+ Recorta el dígito, lo escala a 20x20 y lo centra en un lienzo de 28x28. La red convolucional devuelve una probabilidad para cada dígito del 0 al 9. Se toma la mayor.
+Filtro de estabilidad. Solo acepta la predicción si la confianza es mayor al 85 % y se repite en 8 frames seguidos. Así no se envían lecturas falsas.
+Envío. Manda el dígito por puerto serie al ESP-A, una sola vez por cada cambio.
 ![Reconocimiento Punto 2](docs/reconocimiento_punto2.png)
 
-### Solución de problemas
-- **La OLED no enciende:** revisa SDA/SCL, la dirección (`0x3C` o `0x3D`) y la alimentación.
-- **No llega nada por SPI:** revisa GND común, que MOSI vaya a MOSI (sin cruzar) y que los pines coincidan con los `#define`.
-- **Reconoce mal:** mejora la luz, usa trazo grueso y oscuro, y mantén el dígito centrado en el recuadro.
-- **El puerto no abre:** cierra el Monitor Serie del Arduino IDE antes de ejecutar Python.
+### codigo esclavo
+/*
+ * ESP-B  (ESCLAVO SPI + pantalla OLED I2C SSD1306 128x64)
+ * Recibe del ESP-A la trama [0xA5, dígito, 0xA5 ^ dígito, 0x00]
+ * y muestra el dígito en grande en la OLED.
+ *
+ * Librerías (Gestor de librerías de Arduino IDE):
+ *   - Adafruit SSD1306
+ *   - Adafruit GFX Library
+ */
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "driver/spi_slave.h"
+
+// ---------- Pines ----------
+#if CONFIG_IDF_TARGET_ESP32C3
+  // ESP32-C3 (como en el diagrama)
+  #define HOST_SPI  SPI2_HOST
+  #define PIN_SCK   4
+  #define PIN_MISO  5
+  #define PIN_MOSI  6
+  #define PIN_CS    7
+  #define PIN_SDA   8
+  #define PIN_SCL   9
+#else
+  // ESP32 clásico
+  #define HOST_SPI  SPI3_HOST
+  #define PIN_SCK   18
+  #define PIN_MISO  19
+  #define PIN_MOSI  23
+  #define PIN_CS     5
+  #define PIN_SDA   21
+  #define PIN_SCL   22
+#endif
+
+#define CABECERA     0xA5
+#define OLED_ANCHO   128
+#define OLED_ALTO    64
+#define OLED_ADDR    0x3C
+
+Adafruit_SSD1306 oled(OLED_ANCHO, OLED_ALTO, &Wire, -1);
+
+WORD_ALIGNED_ATTR uint8_t rxbuf[4];
+WORD_ALIGNED_ATTR uint8_t txbuf[4];
+
+void mostrarTexto(const char *msg) {
+  oled.clearDisplay();
+  oled.setTextSize(1);
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor(0, 0);
+  oled.print(msg);
+  oled.display();
+}
+
+void mostrarDigito(uint8_t d) {
+  oled.clearDisplay();
+  oled.setTextSize(6);                 // caracter de 36x48 px
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor((OLED_ANCHO - 36) / 2, (OLED_ALTO - 48) / 2);
+  oled.print(d);
+  oled.display();
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  Wire.begin(PIN_SDA, PIN_SCL);
+  if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("No se encontró la OLED (revisa SDA/SCL y dirección 0x3C)");
+    while (true) delay(1000);
+  }
+  mostrarTexto("ESP-B listo\nEsperando digito...");
+
+  spi_bus_config_t bus = {};
+  bus.mosi_io_num = PIN_MOSI;
+  bus.miso_io_num = PIN_MISO;
+  bus.sclk_io_num = PIN_SCK;
+  bus.quadwp_io_num = -1;
+  bus.quadhd_io_num = -1;
+
+  spi_slave_interface_config_t esclavo = {};
+  esclavo.mode = 0;
+  esclavo.spics_io_num = PIN_CS;
+  esclavo.queue_size = 3;
+  esclavo.flags = 0;
+
+  esp_err_t r = spi_slave_initialize(HOST_SPI, &bus, &esclavo, SPI_DMA_CH_AUTO);
+  if (r != ESP_OK) {
+    Serial.printf("Error al iniciar SPI esclavo: %d\n", r);
+    while (true) delay(1000);
+  }
+  Serial.println("ESP-B listo (esclavo SPI)");
+}
+
+void loop() {
+  memset(rxbuf, 0, sizeof(rxbuf));
+  memset(txbuf, 0, sizeof(txbuf));
+
+  spi_slave_transaction_t t = {};
+  t.length    = 4 * 8;        // bits
+  t.rx_buffer = rxbuf;
+  t.tx_buffer = txbuf;
+
+  // Bloquea hasta que el maestro complete una transacción
+  esp_err_t r = spi_slave_transmit(HOST_SPI, &t, portMAX_DELAY);
+  if (r != ESP_OK) return;
+
+  bool valida = (rxbuf[0] == CABECERA) &&
+                (rxbuf[1] <= 9) &&
+                (rxbuf[2] == (uint8_t)(CABECERA ^ rxbuf[1]));
+  if (valida) {
+    Serial.printf("Recibido por SPI: %u\n", rxbuf[1]);
+    mostrarDigito(rxbuf[1]);
+  } else {
+    Serial.println("Trama SPI invalida");
+  }
+}
 
 ---
 
-## Evidencias
-- Punto 1: [Video de funcionamiento](docs/demo_punto1.mp4) ⚠️
-- Punto 2: [Video de funcionamiento](docs/demo_punto2.mp4) ⚠️
 
-Si un video pesa más de 25 MB, súbelo a YouTube y reemplaza el enlace.
 
 ## Autor
-Natti, Ingeniería Mecatrónica ⚠️ (agrega tu nombre completo, curso y fecha)
+NICOLE NATALIA CASTILLO
+KEVIN ALEJANDRO VEGA MEDINA
