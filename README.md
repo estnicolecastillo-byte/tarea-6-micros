@@ -1,5 +1,6 @@
 # Actividad: ESP32, comunicación I²C / SPI / UART y visión computacional
-
+## NICOLE NATALIA CASTILLO 
+## KEVIN ALEJANDRO VEGA MEDINA
 ## Estructura del repositorio
 
 
@@ -268,7 +269,7 @@ void loop() {
   }
 }
 ```
----
+
 
 
 
