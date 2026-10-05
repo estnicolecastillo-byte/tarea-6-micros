@@ -1,10 +1,6 @@
 # Actividad: ESP32, comunicación I²C / SPI / UART y visión computacional
 ## NICOLE NATALIA CASTILLO 
 ## KEVIN ALEJANDRO VEGA MEDINA
-## Estructura del repositorio
-
-
-## Instalación general
 
 
 ## Punto 1: Teclado I²C + brazo robótico en PyBullet
